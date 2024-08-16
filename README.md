@@ -4,9 +4,9 @@ A Phaser 3 implementation of the game <a href="https://bicyclecards.com/how-to-p
 
 ## Demo
 
-You can find a playable demo of the game here: <a href="" target="_blank">Phaser 3 - Solitaire</a>.
+You can find a playable version of the game here: <a href="https://devshareacademy.github.io/phaser-3-solitaire-tutorial/" target="_blank">Phaser 3 - Solitaire</a>.
 
-TODO: add gif of gameplay
+![Gameplay](/docs/gameplay.gif?raw=true 'Gameplay')
 
 ## Local Development
 
