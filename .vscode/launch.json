@@ -1,0 +1,24 @@
+// https://code.visualstudio.com/docs/editor/debugging#_launch-configurations
+{
+  "version": "0.2.0",
+  "configurations": [
+    // based on https://github.com/Microsoft/vscode-recipes/tree/master/debugging-jest-tests
+    {
+      "name": "uvu All",
+      "type": "node",
+      "request": "launch",
+      "skipFiles": ["<node_internals>/**"],
+      "program": "${workspaceFolder}/node_modules/.bin/uvu",
+      "args": ["-r", "ts-node/register", "tests"],
+      "console": "integratedTerminal",
+    },
+    {
+      "name": "uvu Current File",
+      "type": "node",
+      "request": "launch",
+      "skipFiles": ["<node_internals>/**"],
+      "args": ["-r", "ts-node/register", "${relativeFile}"],
+      "console": "integratedTerminal"
+    }
+  ]
+}
