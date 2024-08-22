@@ -12,7 +12,7 @@ You can find a playable version of the game here: <a href="https://devshareacade
 
 ### Requirements
 
-<a href="https://nodejs.org" target="_blank">Node.js</a> and <a href="https://pnpm.io/" target="_blank">pNPm</a> are required to install dependencies and run scripts via `pnpm`.
+<a href="https://nodejs.org" target="_blank">Node.js</a> and <a href="https://pnpm.io/" target="_blank">pnpm</a> are required to install dependencies and run scripts via `pnpm`.
 
 <a href="https://vitejs.dev/" target="_blank">Vite</a> is required to bundle and serve the web application. This is included as part of the projects dev dependencies.
 
