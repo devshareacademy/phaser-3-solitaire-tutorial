@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser';
 import { ASSET_KEYS, CARD_HEIGHT, CARD_WIDTH, SCENE_KEYS } from './common';
+import { Solitaire } from '../lib/solitaire';
 
 // used for drawing out game objects for debugging our player input
 const DEBUG = true;
@@ -26,8 +27,16 @@ const SUIT_FRAMES = {
   SPADE: 39,
   CLUB: 0,
 };
+type ZoneType = keyof typeof ZONE_TYPE;
+// the different type of drop zones, or areas players can drop cards in the game
+const ZONE_TYPE = {
+  FOUNDATION: 'FOUNDATION',
+  TABLEAU: 'TABLEAU',
+} as const;
 
 export class GameScene extends Phaser.Scene {
+  // contains the core Solitaire game logic and has the actual game state
+  #solitaire!: Solitaire;
   // keeps track of the card game objects in our draw pile (will have 3 game objects)
   #drawPileCards!: Phaser.GameObjects.Image[];
   // keeps track of the card game objects in our discard pile (will have 2 game objects)
@@ -42,6 +51,10 @@ export class GameScene extends Phaser.Scene {
   }
 
   public create(): void {
+    // create solitaire game instance
+    this.#solitaire = new Solitaire();
+    this.#solitaire.newGame();
+
     // setup game objects based on solitaire game state
     this.#createDrawPile();
     this.#createDiscardPile();
@@ -50,6 +63,7 @@ export class GameScene extends Phaser.Scene {
 
     // setup drop zones for interactions and events for drag
     this.#createDragEvents();
+    this.#createDropZones();
   }
 
   #createDrawPile(): void {
@@ -144,6 +158,7 @@ export class GameScene extends Phaser.Scene {
     this.#createDragStartEventListener();
     this.#createOnDragEventListener();
     this.#createDragEndEventListener();
+    this.#createDropEventListener();
   }
 
   #createDragStartEventListener(): void {
@@ -198,7 +213,7 @@ export class GameScene extends Phaser.Scene {
     this.input.on(
       Phaser.Input.Events.DRAG_END,
       (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.Image) => {
-        // TODO: reset the depth on the container or image game object
+        // reset the depth on the container or image game object
         const tableauPileIndex = gameObject.getData('pileIndex') as number | undefined;
         if (tableauPileIndex !== undefined) {
           this.#tableauContainers[tableauPileIndex].setDepth(0);
@@ -206,22 +221,22 @@ export class GameScene extends Phaser.Scene {
           gameObject.setDepth(0);
         }
 
-        // TODO: check if game object overlaps with foundation
-        // TODO: check if game object overlaps with tableau
-        // TODO: check if game object overlaps with with multiple tableau piles and determine were to place game object
-        // TODO: if game object was not destroyed, still active, we need to update that game objects data to match were the card was placed
+        // if game object was not destroyed, still active, we need to update that game objects data to match were the card was placed
+        if (gameObject.active) {
+          gameObject.setPosition(gameObject.getData('x') as number, gameObject.getData('y') as number);
+          // reset card game objects alpha since we are done moving the object
+          gameObject.setAlpha(1);
 
-        gameObject.setPosition(gameObject.getData('x') as number, gameObject.getData('y') as number);
-        // reset card game objects alpha since we are done moving the object
-        gameObject.setAlpha(1);
-
-        // if card is part of the tableau, we need to move all cards that are stacked on top of this card back to the original location as well
-        const cardIndex = gameObject.getData('cardIndex') as number;
-        if (tableauPileIndex !== undefined) {
-          const numberOfCardsToMove = this.#getNumberOfCardsToMoveAsPartOfStack(tableauPileIndex, cardIndex);
-          for (let i = 1; i <= numberOfCardsToMove; i += 1) {
-            const cardToMove = this.#tableauContainers[tableauPileIndex].getAt<Phaser.GameObjects.Image>(cardIndex + i);
-            cardToMove.setPosition(cardToMove.getData('x') as number, cardToMove.getData('y') as number);
+          // if card is part of the tableau, we need to move all cards that are stacked on top of this card back to the original location as well
+          const cardIndex = gameObject.getData('cardIndex') as number;
+          if (tableauPileIndex !== undefined) {
+            const numberOfCardsToMove = this.#getNumberOfCardsToMoveAsPartOfStack(tableauPileIndex, cardIndex);
+            for (let i = 1; i <= numberOfCardsToMove; i += 1) {
+              const cardToMove = this.#tableauContainers[tableauPileIndex].getAt<Phaser.GameObjects.Image>(
+                cardIndex + i,
+              );
+              cardToMove.setPosition(cardToMove.getData('x') as number, cardToMove.getData('y') as number);
+            }
           }
         }
       },
@@ -244,5 +259,181 @@ export class GameScene extends Phaser.Scene {
       return lastCardIndex - cardIndex;
     }
     return 0;
+  }
+
+  #createDropZones(): void {
+    // create drop zone for foundation piles, in the game we will have 1 drop zone and then automatically place the card in the pile it belongs
+    // for each drop zone, we add custom data so when the `drag` event listener is invoked, we can run specific logic to that zone type
+    let zone = this.add.zone(350, 0, 270, 85).setOrigin(0).setRectangleDropZone(270, 85).setData({
+      zoneType: ZONE_TYPE.FOUNDATION,
+    });
+    if (DEBUG) {
+      this.add.rectangle(350, 0, zone.width, zone.height, 0xff0000, 0.2).setOrigin(0);
+    }
+
+    // drop zone for each tableau pile in the game (the 7 main piles)
+    for (let i = 0; i < 7; i += 1) {
+      zone = this.add
+        .zone(30 + i * 85, 92, 75.5, 585)
+        .setOrigin(0)
+        .setRectangleDropZone(75.5, 585)
+        .setData({
+          zoneType: ZONE_TYPE.TABLEAU,
+          tableauIndex: i,
+        })
+        .setDepth(-1);
+      if (DEBUG) {
+        this.add.rectangle(30 + i * 85, 92, zone.width, zone.height, 0xff0000, 0.5).setOrigin(0);
+      }
+    }
+  }
+
+  #createDropEventListener(): void {
+    // listen for drop events on a game object, this will be used for knowing which card pile a player is trying to add a card game object to
+    // which will then trigger validation logic to check if a valid move was maded
+    this.input.on(
+      Phaser.Input.Events.DROP,
+      (pointer: Phaser.Input.Pointer, gameObject: Phaser.GameObjects.Image, dropZone: Phaser.GameObjects.Zone) => {
+        const zoneType = dropZone.getData('zoneType') as ZoneType;
+        if (zoneType === ZONE_TYPE.FOUNDATION) {
+          this.#handleMoveCardToFoundation(gameObject);
+          return;
+        }
+        const tableauIndex = dropZone.getData('tableauIndex') as number;
+        this.#handleMoveCardTableau(gameObject, tableauIndex);
+      },
+    );
+  }
+
+  #handleMoveCardToFoundation(gameObject: Phaser.GameObjects.Image): void {
+    let isValidMove = false;
+    let isCardFromDiscardPile = false;
+
+    // check if card is from discard pile or tableau pile based on the pileIndex in the data manager
+    const tableauPileIndex = gameObject.getData('pileIndex') as number | undefined;
+    if (tableauPileIndex === undefined) {
+      isValidMove = this.#solitaire.playDiscardPileCardToFoundation();
+      isCardFromDiscardPile = true;
+    } else {
+      isValidMove = this.#solitaire.moveTableauCardToFoundation(tableauPileIndex);
+    }
+
+    // if this is not a valid move, we don't need to update anything on the card since the `dragend` event handler will
+    // move the card back to the original location
+    if (!isValidMove) {
+      return;
+    }
+
+    // update discard pile cards, or flip over tableau cards if needed
+    if (isCardFromDiscardPile) {
+      this.#updateCardGameObjectsInDiscardPile();
+    } else {
+      this.#handleRevealingNewTableauCards(tableauPileIndex as number);
+    }
+
+    // only destroy card from tableau, since we need to reuse the card from the discard pile
+    if (!isCardFromDiscardPile) {
+      gameObject.destroy();
+    }
+    // update our phaser game objects
+    this.#updateFoundationPiles();
+  }
+
+  #handleMoveCardTableau(gameObject: Phaser.GameObjects.Image, targetTableauPileIndex: number): void {
+    let isValidMove = false;
+    let isCardFromDiscardPile = false;
+
+    // store reference to the original size of the tableau pile so we know were to place game object
+    const originalTargetPileSize = this.#tableauContainers[targetTableauPileIndex].length;
+
+    // check if card is from discard pile or tableau pile based on the pileIndex in the data manager
+    const tableauPileIndex = gameObject.getData('pileIndex') as number | undefined;
+    const tableauCardIndex = gameObject.getData('cardIndex') as number;
+    if (tableauPileIndex === undefined) {
+      isValidMove = this.#solitaire.playDiscardPileCardToTableau(targetTableauPileIndex);
+      isCardFromDiscardPile = true;
+    } else {
+      isValidMove = this.#solitaire.moveTableauCardsToAnotherTableau(
+        tableauPileIndex,
+        tableauCardIndex,
+        targetTableauPileIndex,
+      );
+    }
+
+    // if this is not a valid move, we don't need to update anything on the card(s) since the `dragend` event handler will
+    // move the card(s) back to the original location
+    if (!isValidMove) {
+      return;
+    }
+
+    // add single discard pile card to tableau as a new game object
+    if (isCardFromDiscardPile) {
+      const card = this.#createCard(
+        0,
+        originalTargetPileSize * 20,
+        true,
+        originalTargetPileSize,
+        targetTableauPileIndex,
+      );
+      card.setFrame(gameObject.frame);
+      this.#tableauContainers[targetTableauPileIndex].add(card);
+      // update the remaining cards in discard pile
+      this.#updateCardGameObjectsInDiscardPile();
+      return;
+    }
+
+    // for each card in the current stack that is being moved, we need to remove the card from
+    // the existing container and add to the target tableau container
+    const numberOfCardsToMove = this.#getNumberOfCardsToMoveAsPartOfStack(tableauPileIndex as number, tableauCardIndex);
+    for (let i = 0; i <= numberOfCardsToMove; i += 1) {
+      const cardGameObject =
+        this.#tableauContainers[tableauPileIndex as number].getAt<Phaser.GameObjects.Image>(tableauCardIndex);
+      this.#tableauContainers[tableauPileIndex as number].removeAt(tableauCardIndex);
+      this.#tableauContainers[targetTableauPileIndex].add(cardGameObject);
+
+      // update phaser game object data to match the new values for tableau and card index
+      const cardIndex = originalTargetPileSize + i;
+      cardGameObject.setData({
+        x: 0,
+        y: cardIndex * 20,
+        cardIndex,
+        pileIndex: targetTableauPileIndex,
+      });
+    }
+
+    // update depth on container to be the original value
+    this.#tableauContainers[tableauPileIndex as number].setDepth(0);
+
+    // get the cards tableau pile and check to see if the new card at the bottom of the stack should be flipped over
+    this.#handleRevealingNewTableauCards(tableauPileIndex as number);
+  }
+
+  /**
+   * Updates the top and bottom cards in the discard pile to reflect the state from the Solitaire
+   * game instance.
+   */
+  #updateCardGameObjectsInDiscardPile(): void {
+    // update the top card in the discard pile to reflect the card below it
+    this.#discardPileCards[1].setFrame(this.#discardPileCards[0].frame).setVisible(this.#discardPileCards[0].visible);
+    // update the bottom card in the discard pile to have the correct value based on the solitaire game state
+    this.#discardPileCards[0].setVisible(false);
+
+    // TODO: grab card state from Solitaire instance and update bottom card frame based on state
+  }
+
+  /**
+   * Checks the tableau pile that the played card came from to see if we now need to flip the next
+   * card in the stack.
+   */
+  #handleRevealingNewTableauCards(tableauPileIndex: number): void {
+    // TODO
+  }
+
+  /**
+   * Updates each card in the foundation piles to have the latest card frame after a card is dropped in the
+   * foundation zone. Will make the card visible if an Ace is played.
+   */
+  #updateFoundationPiles(): void {
+    // TODO
   }
 }
