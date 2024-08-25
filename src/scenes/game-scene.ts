@@ -1,9 +1,11 @@
 import * as Phaser from 'phaser';
 import { ASSET_KEYS, CARD_HEIGHT, CARD_WIDTH, SCENE_KEYS } from './common';
 import { Solitaire } from '../lib/solitaire';
+import { Card } from '../lib/card';
+import { FoundationPile } from '../lib/foundation-pile';
 
 // used for drawing out game objects for debugging our player input
-const DEBUG = true;
+const DEBUG = false;
 // the scale factor that will be applied to our card image game objects
 const SCALE = 1.5;
 // the frame of the card spritesheet that represents the back of a card
@@ -81,12 +83,35 @@ export class GameScene extends Phaser.Scene {
       .zone(0, 0, CARD_WIDTH * SCALE + 20, CARD_HEIGHT * SCALE + 12)
       .setOrigin(0)
       .setInteractive();
+
     drawZone.on(Phaser.Input.Events.POINTER_DOWN, () => {
+      // if no cards in either pile, we don't need to do anything in the ui
+      if (this.#solitaire.drawPile.length === 0 && this.#solitaire.discardPile.length === 0) {
+        return;
+      }
+
+      // if no cards in draw pile, we need to shuffle in discard pile
+      if (this.#solitaire.drawPile.length === 0) {
+        // shuffle in discard pile
+        this.#solitaire.shuffleDiscardPile();
+        // show no cards in discard pile
+        this.#discardPileCards.forEach((card) => card.setVisible(false));
+        // show cards in draw pile based on number of cards in pile
+        this.#showCardsInDrawPile();
+        return;
+      }
+
+      // reaching here means we have cards in the draw pile, so we need to draw a card
+      this.#solitaire.drawCard();
+      // update the shown cards in the draw pile to be based on number of cards in pile
+      this.#showCardsInDrawPile();
       // update the bottom card in the discard pile to reflect the top card
       this.#discardPileCards[0].setFrame(this.#discardPileCards[1].frame).setVisible(this.#discardPileCards[1].visible);
       // update the top card in the discard pile to reflect card we drew
-      this.#discardPileCards[1].setFrame(CARD_BACK_FRAME).setVisible(true);
+      const card = this.#solitaire.discardPile[this.#solitaire.discardPile.length - 1];
+      this.#discardPileCards[1].setFrame(this.#getCardFrame(card)).setVisible(true);
     });
+
     if (DEBUG) {
       this.add.rectangle(drawZone.x, drawZone.y, drawZone.width, drawZone.height, 0xff0000, 0.5).setOrigin(0);
     }
@@ -119,15 +144,20 @@ export class GameScene extends Phaser.Scene {
 
   #createTableauPiles(): void {
     this.#tableauContainers = [];
-    for (let i = 0; i < 7; i += 1) {
-      const x = TABLEAU_PILE_X_POSITION + i * 85;
+
+    this.#solitaire.tableauPiles.forEach((pile, pileIndex) => {
+      const x = TABLEAU_PILE_X_POSITION + pileIndex * 85;
       const tableauContainer = this.add.container(x, TABLEAU_PILE_Y_POSITION, []);
       this.#tableauContainers.push(tableauContainer);
-      for (let j = 0; j < i + 1; j += 1) {
-        const cardGameObject = this.#createCard(0, j * 20, true, j, i);
+      pile.forEach((card, cardIndex) => {
+        const cardGameObject = this.#createCard(0, cardIndex * 20, false, cardIndex, pileIndex);
         tableauContainer.add(cardGameObject);
-      }
-    }
+        if (card.isFaceUp) {
+          cardGameObject.setFrame(this.#getCardFrame(card));
+          this.input.setDraggable(cardGameObject);
+        }
+      });
+    });
   }
 
   #drawCardLocationBox(x: number, y: number): void {
@@ -416,9 +446,12 @@ export class GameScene extends Phaser.Scene {
     // update the top card in the discard pile to reflect the card below it
     this.#discardPileCards[1].setFrame(this.#discardPileCards[0].frame).setVisible(this.#discardPileCards[0].visible);
     // update the bottom card in the discard pile to have the correct value based on the solitaire game state
-    this.#discardPileCards[0].setVisible(false);
-
-    // TODO: grab card state from Solitaire instance and update bottom card frame based on state
+    const discardPileCard = this.#solitaire.discardPile[this.#solitaire.discardPile.length - 2];
+    if (discardPileCard === undefined) {
+      this.#discardPileCards[0].setVisible(false);
+    } else {
+      this.#discardPileCards[0].setFrame(this.#getCardFrame(discardPileCard)).setVisible(true);
+    }
   }
 
   /**
@@ -426,7 +459,19 @@ export class GameScene extends Phaser.Scene {
    * card in the stack.
    */
   #handleRevealingNewTableauCards(tableauPileIndex: number): void {
-    // TODO
+    // update tableau container depth
+    this.#tableauContainers[tableauPileIndex].setDepth(0);
+    // check to see if the tableau pile card at the bottom of the sack needs to be flipped over
+    const flipTableauCard = this.#solitaire.flipTopTableauCard(tableauPileIndex);
+    if (flipTableauCard) {
+      const tableauPile = this.#solitaire.tableauPiles[tableauPileIndex];
+      const tableauCard = tableauPile[tableauPile.length - 1];
+      const cardGameObject = this.#tableauContainers[tableauPileIndex].getAt<Phaser.GameObjects.Image>(
+        tableauPile.length - 1,
+      );
+      cardGameObject.setFrame(this.#getCardFrame(tableauCard));
+      this.input.setDraggable(cardGameObject);
+    }
   }
 
   /**
@@ -434,6 +479,24 @@ export class GameScene extends Phaser.Scene {
    * foundation zone. Will make the card visible if an Ace is played.
    */
   #updateFoundationPiles(): void {
-    // TODO
+    this.#solitaire.foundationPiles.forEach((pile: FoundationPile, pileIndex: number) => {
+      if (pile.value === 0) {
+        return;
+      }
+
+      this.#foundationPileCards[pileIndex].setVisible(true).setFrame(this.#getCardFrame(pile));
+    });
+  }
+
+  #showCardsInDrawPile(): void {
+    const numberOfCardsToShow = Math.min(this.#solitaire.drawPile.length, 3);
+    this.#drawPileCards.forEach((card, cardIndex) => {
+      const showCard = cardIndex < numberOfCardsToShow;
+      card.setVisible(showCard);
+    });
+  }
+
+  #getCardFrame(data: Card | FoundationPile): number {
+    return SUIT_FRAMES[data.suit] + data.value - 1;
   }
 }
